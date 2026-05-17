@@ -185,7 +185,7 @@ class Airway():
         
         # self.path_alias = "path" # now
         if getattr(class_way, "path_alias", None):
-            class_way.path = getattr(class_way._class, class_way.pass_alias) # path = "/something" # now
+            class_way.path = getattr(class_way._class, class_way.path_alias) # path = "/something" # now
         elif Airline._auto_class_naming:
             class_way.path = class_way._class.__name__.lower().replace("_", "-")
         cls._registered_classes.add(_class)
@@ -264,7 +264,8 @@ class Airway():
                     print(f"[fletfly] Warning: build function <{build.__name__}> will be ignored, airline fly_to {fly_to}.")
         if not callable(build) and build is not None:
             raise ValueError(f"[fletfly] layout view must be callable function as the following."
-                             "def layout(page, content, *args, **kwargs):..."
+                             "def layout(page):... return placeholder      #or"
+                             "def layout(page):... return [placeholders]"
                              "and use content as the injection contents in your layout")
         if (fly_in is not None and not callable(fly_in)) or (fly_out is not None and not callable(fly_out)):
             print(f"[fletfly] fly_in entry middlewares and fly_out exit middlewares should be callable functions"
@@ -444,6 +445,9 @@ class Airway():
         children_data = params.pop('subways', None)
         self.__dict__.update(params)
         self.__dict__.update(params['kwargs'])
+
+        if self.path: self.path = self.path.lower()
+
         if children_data:
             self.subways = children_data
         self.parent = None
@@ -495,7 +499,6 @@ class Airway():
                         fullpath = ""
                         loops = 0
                         while isinstance(parent, Airway) and loops < 10:
-                            print(1111111111111111, "parent", parent)
                             if getattr(parent, "path"): fullpath = parent.path + fullpath
                             parent = getattr(parent , "parent", "")
                             loops += 1
@@ -705,7 +708,7 @@ class Airline: # singleton only 1 instance
             'path', # '/segment1/zonesegment1/segment2/:id'
             'take_off_zone', # '/segment1/zonesegment1/'
             'lineage', # [flight_node, flight_node]
-            'build', 'build_alias', # callable or view or list of contents
+            'build_node',
             'fly_in', # [{"func":func1, "args":args, "takeoff":'/'}]
             'fly_out', # [{"func":func2, "args":args, "takeoff":'/'}]
             'fly_to', 'fly_to_alias', # redirect, redirectTo
@@ -732,20 +735,15 @@ class Airline: # singleton only 1 instance
             return ":" in self.path or ("[" in self.path and "]" in self.path)
 
         def __repr__(self):
-            build = self.build.__name__+"()" if callable(self.build) else self.build
-            if isinstance(build, str) and not build.endswith("()"):
-                build = f'"{build}"'
-            elif build is None:
-                build = ""
+            builds = self.build_node.static if self.build_node else "N/A"
+            if isinstance(builds, str) and not builds.endswith("()"):
+                builds = f'"{builds}"'
+            elif builds is None:
+                builds = ""
             layout_nodes = f"[{len(self.layout_nodes)}]"
             
-            build_alias = self.build_alias
-            if isinstance(build_alias, str):
-                build_alias =  f'"{build_alias}"'
-            elif build_alias is None:
-                build_alias = ""
             
-            return f"layouts={layout_nodes}  build={build:<15} build_name={build_alias:<13}{self.path}"
+            return f"layouts={layout_nodes}  build={builds} fly_to={self.fly_to}  {self.path}"
          
     class FlyBox:
         def __init__(self, page):
@@ -955,16 +953,21 @@ class Airline: # singleton only 1 instance
                 fly_in = _FlyList(local_fly_in) if airway.fly_in_override else _FlyList(fly_in + list(local_fly_in))
                 fly_out = _FlyList(local_fly_out) if airway.fly_out_override else _FlyList(list(local_fly_out) + fly_out)
             
-            if airway._class and hasattr(airway, "layout_alias") and airway.layout_alias:
-                layout_node = Airline._LayoutNode(_class=airway._class, attr_name=airway.layout_alias)
-                if hasattr(airway, "layout_override_alias") and airway.layout_override_alias:
-                    layout_node.over_name = airway.layout_override_alias
-                layout_nodes = p_layout_nodes + [layout_node]           
-            elif not airway._class and hasattr(airway, "layout") and airway.layout:
-                local_layout_nodes = [Airline._LayoutNode(airway.layout)]
-                layout_nodes = local_layout_nodes if airway.layout_override else p_layout_nodes + local_layout_nodes
+            build_node = None
+            layout_node = None
+            if airway._class:
+                if airway.build_alias:
+                    build_node = Airline._BuildNode(None, airway._class, airway.build_alias)
+                if airway.layout_alias:
+                    layout_node = Airline._LayoutNode(None, airway._class, airway.layout_alias, airway.fly_in_override_alias)
             else:
-                layout_nodes = p_layout_nodes
+                if airway.build:
+                    build_node = Airline._BuildNode(airway.build)
+                if airway.layout:
+                    layout_node = Airline._LayoutNode(airway.layout)
+
+            layout_nodes = list(p_layout_nodes) + ([layout_node] if layout_node else [])
+
 
             if true_node:
                 node = Airline._FlightNode(
@@ -975,8 +978,7 @@ class Airline: # singleton only 1 instance
                     title_alias = airway.title_alias,
                     icon= airway.icon,
                     icon_alias= airway.icon_alias,
-                    build=airway.build,
-                    build_alias=airway.build_alias,
+                    build_node = build_node,
                     fly_to = airway.fly_to,
                     fly_to_alias = airway.fly_to_alias,
                     is_zone=airway.is_zone,
@@ -1044,11 +1046,10 @@ class Airline: # singleton only 1 instance
     async def _navigate(self, page, fullpath = None):
 
         path, query = self._get_path_query(page, fullpath)
-
+        
         node, params = self.match_path(path)
-        
         if self._check_fly_to(page, node): return None
-        
+
         node = self._handle_fallback(page, node, path) 
         if not node: return None
 
@@ -1111,10 +1112,10 @@ class Airline: # singleton only 1 instance
                 return True
         return False
 
-    def _handle_fallback(self, page, node, path):
-        params = None
-        if node and not node.build: print(f"[Fletfly] Warning: missing build view on path path {path}")
-        elif not node:  
+    def _handle_fallback(self, page, node=None, path=None, build_failed=False):
+        
+        if not node or build_failed:
+            if build_failed: print(f"[fletfly] Failed to create a build for route {path}")
             if self.every_level_fallback:
                 temp_path = path.rstrip("/")
                 while True:
@@ -1124,24 +1125,19 @@ class Airline: # singleton only 1 instance
                         temp_path = ""
                     
                     fallback_path = (temp_path + "/*") if temp_path else "/*"
-                    node = self.match_path(fallback_path)
+                    node, param = self.match_path(fallback_path)
                     
-                    if (node and node.build) or not temp_path:
+                    if node or not temp_path:
                         break
-                                
-            if (not node or not node.build) and self.error_build:
-                
+            if not node and self.error_build:
                 current_zone_error = (page.fly.take_off_zone.rstrip("/") + "/" + self.error_build.strip("/"))
-                node = self.match_path(page, current_zone_error)
-                
-                if not node or not node.build:
-                    node = self.match_path(page, "/" + self.error_build.strip("/"))
-
-            if not node or not node.build:
+                node = self.match_path(current_zone_error)
+                if not node:
+                    node = self.match_path("/" + self.error_build.strip("/"))
+            if not node:
                 self._default_error_view(page)
                 return None
         return node
-
     def _apply_fly_pads(self, node:_FlightNode):
         if self.fly_pads == FlyPad.target_only or node.path == "/":
             return [node]
@@ -1319,14 +1315,20 @@ class Airline: # singleton only 1 instance
         return final_list
     
     async def _reconcile_views(self, page, final_nodes_list):
-        # existing_layouts: check all page.views from top to bottom for layouts
-        existing_layouts = []
-        for v in reversed(page.views): # periority is from top most
-            if hasattr(v, "layouts"):
-                for l in v.layouts:
-                    if l.is_active: # inactive clones are useless
-                        existing_layouts.append(l) # double active auto ignored during search
+        all_active_layouts = set()
+        #collect existing_layouts is_active layouts from page.fly.layouts & page.views[-1].fly.layouts
+        existing_layouts = set(page.fly.layouts) if hasattr(page, "fly") and hasattr(page.fly,"layouts") else set()
         
+        #if page.views and page.views[-1] and hasattr(page.views[-1],"fly_layouts") and page.views[-1].fly_layouts:
+        #    for lay in page.views[-1].fly_layouts:
+        #        existing_layouts.add(lay)
+        #page.views[-1].fly_layouts = None
+        #dismount them all, specially the ones from the top view
+        for lay in existing_layouts:
+            for holder in lay.holders:
+                holder.content = None
+        #create new acitve_layouts empyt set()
+
         final_paths = [self._get_real_path(page.route, n.path) if n.is_dynamic else n.path for n in final_nodes_list]
         
         #should_remove_top = False
@@ -1343,73 +1345,94 @@ class Airline: # singleton only 1 instance
         for i in range(len(page.views) - 1, -1, -1):
             if page.views[i].route not in final_paths and await self._apply_fly_out_checks(page, page.views[i]):
                 page.views.pop(i)
-
-        # start creating the views from top to bottom
-        for index, node in enumerate(reversed(final_nodes_list)):
-            existing_view = next((v for v in page.views if v.route == final_paths[index]), None)
+        #for each from bottom to top:
+        for index, flight_node in enumerate(final_nodes_list):
+            #get his view_active_layouts, check the existing_layout list(identify by _LayoutNode) or create new active
+            view_layout_nodes = Airline._LayoutNode._get_not_overrided_layout_Nodes(flight_node.layout_nodes)
             
+            layout_objs:list[Airline._LayoutObj] = []
+            for current_node in view_layout_nodes:
+                layout_obj = None
+                for lay in existing_layouts:
+                    if lay.layout_node == current_node:
+                        layout_obj = lay
+                        break                     
+                if layout_obj is None:
+                    layout_obj = Airline._LayoutObj._create_layout(page, current_node)
+                #add this layouts to active_layouts set
+                layout_objs.append(layout_obj)
+                #add the active layouts to acitve_layouts set()
+                all_active_layouts.add(layout_obj)
+            # if the view is not there and will be built, then build its views, else get his views from view.fly_build_obj
+            existing_view = next((v for v in page.views if v.route == final_paths[index]), None)
+            build_obj = None
+            pre_view = None
             if existing_view:
-                view = page.views.pop(page.views.index(existing_view))
-            else:
-                view = self._build_view_element(page, node, existing_layouts)
+                build_obj = existing_view.fly_build_obj if hasattr(existing_view, "fly_build_obj") else None
+                page.views.remove(existing_view)
+            if not build_obj:
+                build_obj = Airline._BuildObj._create_build(page, flight_node.build_node )
+            #inject the builds in layout in layout in layout till you finish the layouts list=view_final
+            final_obj:list = build_obj
 
-        #if should_remove_top:
-        #    if top_view in page.views and await self._apply_fly_out_checks(page, top_view):
-        #        page.views.remove(top_view)
-        
+            all_objs = [build_obj] + (sorted(layout_objs,reverse=True) if layout_objs else [])
+            for i, obj in enumerate(all_objs):
+                final_obj = obj
+                if final_obj:
+                    if final_obj.objs and isinstance(final_obj.objs[0], ft.View):
+                        pre_view=final_obj.objs[0]
+                        if len(final_obj.objs)>1:
+                            print("[fletfly] ft.View is a top most control, all other controls will be ignored")
+                        elif i < len(all_objs)-1:
+                            print("[fletfly] ft.View is a top most control, further layouts will be ignored")
+                        break
+                    if i < len(all_objs)-1:
+                        layout_obj = all_objs[i+1]
+                        for obj, slot in zip(final_obj.objs, layout_obj.holders):
+                            slot.content = obj
+            if not final_obj or not final_obj.objs:
+                print(f"[fletfly] failed to build view of path '{'/' + flight_node.path.strip('/')}'")                
+                if index < len(final_nodes_list) - 1:
+                    print(f"passing to the next node")
+                    continue
+                else:
+                    self._handle_fallback(page, None, flight_node.path, True)             
+                    return None
+            if not pre_view:
+                pre_view = ft.View(controls=final_obj.objs)
+            #if not top-view
+            if index < len(final_nodes_list)-1:
+                print(111111111111111111111111, pre_view.fly_build_obj if hasattr(pre_view, "fly_build_obj") else "Not found")
+                #create a shallow clone copy of the view_final (layouts and builds)
+                final_view = Airline._LayoutObj._clone_control(pre_view)
+                #dismount the builds from the view, keep them to be view.fly_build_obj = build
+                for lay in layout_objs:
+                    for holder in lay.holders:
+                        holder.content = None
+            #if top view
+            else:
+                final_view = pre_view
+            ########apply the final_final to top_view
+
+            ####set view.fly_build_obj to every view (top or not)
+            
+            #if should_remove_top:
+            #    if top_view in page.views and await self._apply_fly_out_checks(page, top_view):
+            #        page.views.remove(top_view)
+
+            page.views.append(final_view)
+            if flight_node.is_zone:
+                page.fly.take_off_zone = flight_node.path.rstrip("/") + "/"
+            final_view.take_off_zone = page.fly.take_off_zone
+            final_view.route = self._get_real_path(page.route, flight_node.path) if flight_node.is_dynamic else flight_node.path
+            final_view.params = dict(page.fly.params) # to restore on back
+            final_view.query = dict(page.fly.query) # to restore on back
+            final_view.node = flight_node
+            final_view.fly_build_obj = build_obj
+            
+        page.fly.layouts = all_active_layouts
         page.fly.last_success_path = page.route
 
-    def _build_view_element(self, page, fly_node:_FlightNode, existing_layouts):
-        view = getattr(fly_node._class, fly_node.build_alias) if fly_node._class else fly_node.build
-        
-        if callable(view): view = view(page)
-
-        def _get_control_list(view):
-            if isinstance(view, list):
-                controls = view
-            elif isinstance(view, ft.Control):
-                controls = [view]
-            else:
-                controls = []
-                print(f"[fletfly] Layout is not returning a valid value")
-            return controls
-
-        required_layout_nodes = Airline._LayoutNode._get_not_overrided_layout_Nodes(fly_node.layout_nodes)
-        
-        for layout_node in reversed(required_layout_nodes):
-            #check in available layout list (by source) from 0 index
-            layout_node = next((l for l in existing_layouts if l.source == layout_node), None)
-            
-            # if your required view is inside the list use it and leave a clone instead (in 0 index)
-            existing_layouts.remove(layout_node)
-            existing_layouts.insert(0, layout_node._clone())
-            # if you found your required is inactive clone, ok, use it, his brother is working above you
-            # if you didn't find, create new active layout and use it and add its clone to the list (in 0 index)
-            #when you finish completely, just forget about the list
-            
-
-
-            if layout_node:            # here the view cant be a view
-                if isinstance(view, ft.View):
-                    print(f"[fletfly] ft.View is the topmost control in flet, can't be injected in layout")
-                    view = view.controls
-                layout_obj = self._LayoutObj._create_layout_or_return_child(page, layout_node, view)
-        # here, it must be a view
-        if not isinstance(view, ft.View): # final must be view
-            # if not a view returned (to be used later in layout)
-            controls = _get_control_list(view)
-            view = ft.View(route=fly_node.path, controls=controls)
-            
-        if fly_node.is_zone:
-            page.fly.take_off_zone = fly_node.path.rstrip("/") + "/"
-        view.take_off_zone = page.fly.take_off_zone
-        view.route = self._get_real_path(page.route, fly_node.path) if fly_node.is_dynamic else fly_node.path
-        view.params = dict(page.fly.params) # to restore on back
-        view.query = dict(page.fly.query) # to restore on back
-        view.node = fly_node
-        view.layouts = layouts
-        
-        return view
     
     def _get_real_path(self, main_path, node_path):
         main_segments = main_path.split("?")[0].strip("/").split("/")
@@ -1426,104 +1449,136 @@ class Airline: # singleton only 1 instance
             else:
                 break
         return "/" + "/".join(result_path)
+
+    @classmethod
+    def _get_sync_func(cls, node):
+        if not hasattr(node, "_class"):
+            return None
+        if node._class and node.attr_name: # dynamic func
+            return getattr(node._class, node.attr_name)
+        elif node.static: # static func
+            return node.static
+        return None    
+    class _BuildNode: # one node created for one build for all times
+        def __init__(self, static=None, _class=None, attr_name=None):
+            self.static = static #function
+            self.attr_name = attr_name
+            self._class = _class #class
+    class _BuildObj:# carrying views (multiple) views info about the build
+        def __init__(self, objs:list[ft.Control]=None, build_node:Airline._BuildNode=None):
+            self.objs = objs
+            self.build_node = build_node
+
+        @classmethod
+        def _create_build(cls, page:ft.page, build_node:Airline._LayoutNode):
+            objs = Airline._get_sync_func(build_node)
+            if callable(objs):
+                objs = objs(page)
+            if not objs: return None
+            objs = list(objs) if isinstance(objs, (list, tuple)) else [objs]
+            if any(not isinstance(c, ft.Control) or isinstance(c, ft.Page) for c in objs):
+                print(f"[fletfly] A build must be a ft.Control or list of controls"
+                       "          or a callable function returning one"
+                       "of course it can not be ft.page")
+                return None
+            return Airline._BuildObj(objs, build_node)
     
     class _LayoutNode: # one node created for one layout for all times
-        def __init__(self, static=None, attr_name=None, over_name=None, _class=None):
+        def __init__(self, static=None, _class=None, attr_name=None, over_name=None):
             self.static = static #function
-            self.attr = None #dynamic function
+            self._class = _class #class
             self.attr_name = attr_name
             self.over_name = over_name
-            self._class = _class #class
-            self.obj_list:list[Airline._LayoutObj] = [] # once and for all times
+
         @classmethod
         def _get_not_overrided_layout_Nodes(cls, layout_node_list:list[Airline._LayoutNode]):
+            slice_idx = 0
             for i in range(len(layout_node_list)-1, -1, -1):
                 n = layout_node_list[i]
                 if n._class and n.over_name and getattr(n._class, n.over_name):
+                    slice_idx = i
                     break
-            return layout_node_list[i:]
-        
-        @classmethod
-        def _get_layout_func(cls, layout_node):
-            if layout_node._class and layout_node.attr_name: # dynamic func
-                layout_node.attr = getattr(layout_node._class, layout_node.attr_name)
-                return layout_node.attr
-            elif layout_node.static: # static func
-                return layout_node.static
-            return None
+            return layout_node_list[slice_idx:]
         
     class _LayoutObj:# objects for same or different layout
-        def __init__(self, obj=None, holder=None, holder_idx=None, child=None,
-                     layout_node:Airline._LayoutNode=None, is_active=None):
-            self.obj = obj
-            self.holder = holder
-            self.holder_idx = holder_idx
-            self.child = child
+        def __init__(self, objs:list[ft.Control]=None, holders:list[ft.Control]=None,
+                     layout_node:Airline._LayoutNode=None):
+            self.objs = objs
+            self.holders = holders
             self.layout_node = layout_node
-            self.is_active = is_active
 
         @classmethod
-        def _create_layout_or_return_child(cls, page:ft.page, layout_node:Airline._LayoutNode, child:ft.Control):
-            layout_func = Airline._LayoutNode._get_layout_func(layout_node)
-            if not layout_func or not callable(layout_func):
-                print(f"[fletfly] A layout must be a callable function [def layout(page, content)]"
-                        "The current layout will be ignored."
-                        "notice: you can also redefine dynamically a class method "
-                        "notice: you can inject your user level arguments in page object")
-                return child
-            else:
-                layout_component = layout_func(page, child)
-                holder = child.parent 
-                holding_index = None # not found
+        def _create_layout(cls, page:ft.page, layout_node:Airline._LayoutNode):
+            layout_tuple = Airline._get_sync_func(layout_node)
+            if callable(layout_tuple):
+                layout_tuple = layout_tuple(page)
+            if not layout_tuple: return None
 
-                if holder and hasattr(holder, "controls") and child in holder.controls:
-                    holding_index = holder.controls.index(child) # 0 or more in controls
-                elif holder and hasattr(holder, "content") and holder.content == child:
-                    holding_index = -1  # content
+            if not isinstance(layout_tuple, (tuple, list)) or len(layout_tuple) !=2:
+                print(f"[fletfly] A layout must be or return a tuple of (layout, placeholder/s)"
+                       "placeholder = ft.Container() "
+                       "layout = ft.Row(contents=[ft.Text('hello'), placeholder])   "
+                       "          def layout1(page)-> ft.Control, ft.Container   #or"
+                       "          def layout1(page)-> ft.Control, list[ft.Container]   ")
+                return None
+                
+            objs = list(layout_tuple[0]) if isinstance(layout_tuple[0], (list, tuple)) else [layout_tuple[0]]   
+            if any(not isinstance(c, ft.Control) or isinstance(c, ft.Page) for c in objs):
+                print(f"[fletfly] A layout component must be a ft.Control or list of controls"
+                       "          of course it can not be ft.page")
+                return None                
 
-                return Airline._LayoutObj(layout_component, holder, holding_index,
-                                          child, layout_node, True)
+            holders = list(layout_tuple[1]) if isinstance(layout_tuple[1], (list, tuple)) else [layout_tuple[1]]
+            if any(not isinstance(c, ft.Control) or isinstance(c, ft.Page) or not hasattr(c, "content") for c in holders):
+                print(f"[fletfly] A layout placeholder must have be a flet control with single content"
+                       "eg: ft.Container, ft. or ft.AnimatedSwitcher"
+                       "of course it can not be ft.page")
+                return None
 
-        def _clone_control(self, control= None):
-            if control is None:
-                control = self.flet_obj
+            return Airline._LayoutObj(objs, holders, layout_node)
+     
+        @classmethod
+        def _clone_control(cls, control):
+            if control is None: return None
             if not isinstance(control, ft.Control) and not (
                 hasattr(control, "__module__") and "flet_charts" in control.__module__):
                 return control
-            if not hasattr(control, "page"):
-                return control    
+            
+            #if not hasattr(control, "page"): # RuntimeError: View(15) Control must be added to the page first
+            #    return control    
             control_class = type(control)
             cloned_controls = []
             if hasattr(control, "controls") and control.controls:
                 for child in control.controls:
-                    cloned_controls.append(self._clone_control(child))
+                    cloned_controls.append(cls._clone_control(child))
             cloned_content = None
             if hasattr(control, "content") and control.content:
-                cloned_content = self._clone_control(control.content)
+                cloned_content = cls._clone_control(control.content)
             start_props = {}
             if cloned_content: 
                 start_props["content"] = cloned_content
             if cloned_controls:
                 start_props["controls"] = cloned_controls
-            ignore_list = ["parent", "content", "controls", "page"]
-            for attr in dir(control):
+            ignore_list = ["parent", "content", "controls", "page", "uid"]
+            for attr in type(control).__init__.__code__.co_varnames:
                 if not attr.startswith("_") and not attr in ignore_list:
                     try:
                         val = getattr(control, attr, None)
                         if val is not None and not callable(val):
                             if isinstance(val, list):
-                                start_props[attr] = [self._clone_control(i) for i in val]
+                                start_props[attr] = [cls._clone_control(i) for i in val]
                             elif isinstance(val, dict):
-                                start_props[attr] = {k: self._clone_control(v) for k, v in val.items()}
+                                start_props[attr] = {k: cls._clone_control(v) for k, v in val.items()}
                             elif hasattr(val, "name") and hasattr(val, "value") and not hasattr(val, "page"):
                                 start_props[attr] = val.value
                             else:
-                                start_props[attr] = self._clone_control(val)
+                                start_props[attr] = cls._clone_control(val)
                     except:
                         continue
             try:
                 new_control = control_class(**start_props)
             except Exception as e :
+                print(e)
                 new_control = control_class()
             return new_control
 
@@ -1716,7 +1771,7 @@ def fly(page, path="/", *args, **kwargs):
         if not hasattr(page, "fly"):
             page.fly = airline.FlyBox(page)
     
-            page.on_route_change = airline._handle_route_change
+            page.on_route_change = airline._handle_route_change 
             page.on_view_pop = airline._handle_view_pop
             
             page.views.clear()
@@ -1724,7 +1779,8 @@ def fly(page, path="/", *args, **kwargs):
         target = f"{page.fly.take_off_zone}{path.strip('/')}".replace("//", "/")
         page.run_task(airline._navigate, page, target)
         page.run_task(page.push_route, target)
-        if __send_help_timer: __send_help_timer.cancel()
+        if __send_help_timer:
+            __send_help_timer.cancel()
         return None
     else: # mistake or wrapper calling
         __reset_help_timer()
@@ -1836,7 +1892,6 @@ __call__ args = (<class '__main__.hi'>,) # inject Class with self attr + check r
 can i make the router not in page level? or 2 routers in the page?
 
 fly_arround check gemini chat
-
-
-
+and think of injecting fly_arround shit in either view or layout (without doubling in single view)
+lower() not working
 """
