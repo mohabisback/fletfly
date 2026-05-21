@@ -17,11 +17,12 @@ We will pass the (page) argument to your functions, and we expect you to pass it
 def layout(page):
     return ...your design... slot(page, 'slot_name') ... slot(page, 3)  ...your design...
            ...your design... slot(page) ...slot(page, 'shared_1', ft.Card(), True)...your design...
-                    (auto-named to 4)^                                     ^ (True=Stick to 'shared_1')
+              (auto-named to 10000001)^                                    ^ (True=Stick to 'shared_1')
 """
 aliases = {
     "path_alias": ["path", "url", "route"],
     "build_alias": [ "build", "view", "builder", "component", "element", "contents", "controls",],
+    # hero_build takes True or 1 for static pathes, and True or int for dynamic pathes (True means 5)
     "hero_build_alias": [ "hero_build", "hero_view", "hero_builder", "hero_component", "hero_element", "hero_contents", "hero_controls",],
     "fly_in_alias": ["fly_in", "loader", "canActivate", "beforeEnter", "middleware", "beforeLoad",],
     "fly_in_override_alias": ["fly_in_override", "loader_override", "canActivate_override", "beforeEnter_override", "middleware_override", "beforeLoad_override",],
@@ -36,9 +37,9 @@ aliases = {
     "icon_alias": ["icon", "logo",],
     "subway_alias": ["subway", "child", "sub", "kid"],
     "fly_around_alias": ["shared", "shared_build"],
-
 }
 rev_aliases = {val:k for k in aliases.keys() for val in aliases.get(k)}
+
 class Airway():
     _airways_all = set() # every created or cloned airway
     _airways_wild = set() # original but never adopted
@@ -1312,9 +1313,13 @@ class Airline: # singleton only 1 instance
                 build_obj = existing_view._fly_build_obj if hasattr(existing_view, "_fly_build_obj") else None
                 Airline._BuildObj._save_hero_build(page, existing_view)
                 page.views.remove(existing_view)
+            
             if not build_obj:
-                build_obj = page.fly._hero_builds.get(final_paths[index])
-            if not build_obj:
+                if flight_node.is_dynamic():
+                    build_obj = page.fly._hero_builds.get(flight_node.path, {}).get(final_paths[index], None)
+                else:
+                    build_obj = page.fly._hero_builds.get(flight_node.path, None)
+            if not build_obj or not isinstance(build_obj, Airline._BuildObj):
                 build_obj = Airline._BuildObj._create_build_obj(page, flight_node.build_node )
 
             all_objs = ([build_obj] if build_obj else []) + (list(reversed(layout_objs)) if layout_objs else [])
@@ -1405,7 +1410,7 @@ class Airline: # singleton only 1 instance
             return node.static
         return None    
     @classmethod
-    def _get_sync_hero(cls, node):
+    def _get_sync_hero(cls, node)->int|bool:
         if node is None:
             return None
         if node._class and node.hero_attr_name: # dynamic func
@@ -1620,11 +1625,24 @@ class Airline: # singleton only 1 instance
 
         @classmethod
         def _save_hero_build(cls, page, view):
-            if hasattr(view, "_fly_build_obj"):
-                if Airline._get_sync_hero(view._fly_build_obj.build_node):
-                    page.fly._hero_builds[view.route] = view._fly_build_obj
+            if not hasattr(view, "_fly_build_obj"):
+                return
+            
+            build_node = view._fly_build_obj.build_node
+            hero_val = Airline._get_sync_hero(build_node)
+            if hero_val:
+                if build_node.is_dynamic():
+                    map = page.fly._hero_builds.get(build_node.path, {})
+                    map[view.route]=view._fly_build_obj
+                    hero_val = hero_val if isinstance(hero_val, int) else 5
+                    while map and len(map) > hero_val:
+                        map.pop(next(iter(map)))
                 else:
-                    page.fly._hero_builds.pop(view.route, None)
+                    map = view._fly_build_obj
+            else:
+                map = None
+            page.fly._hero_builds[build_node.path] = map
+
     class _LayoutNode: # one node created for one layout for all times
         def __init__(self, static=None, _class=None, attr_name=None, over_name=None,
                      hero_static=None, hero_attr_name=None):
@@ -2161,4 +2179,3 @@ airway = Airway
 route = Airway
 Route = Airway
 Router = Airline
-
