@@ -1,5 +1,6 @@
+
 import flet as ft
-import re, sys, inspect, asyncio, os, importlib.util
+import re, sys, inspect, asyncio, os, importlib.util, time
 __all__ = ['Airway', 'airway', 'route', 'Route', 'Airline', 'Router', 'fly_in', 'fly_out', 'layout']
 
 _page_err_msg = f"""
@@ -16,11 +17,12 @@ We will pass the (page) argument to your functions, and we expect you to pass it
 def layout(page):
     return ...your design... slot(page, 'slot_name') ... slot(page, 3)  ...your design...
            ...your design... slot(page) ...slot(page, 'shared_1', ft.Card(), True)...your design...
-                    (auto-named to 10000001)^                              ^ (True=Stick to 'shared_1')
+                    (auto-named to 4)^                                     ^ (True=Stick to 'shared_1')
 """
 aliases = {
     "path_alias": ["path", "url", "route"],
     "build_alias": [ "build", "view", "builder", "component", "element", "contents", "controls",],
+    "hero_build_alias": [ "hero_build", "hero_view", "hero_builder", "hero_component", "hero_element", "hero_contents", "hero_controls",],
     "fly_in_alias": ["fly_in", "loader", "canActivate", "beforeEnter", "middleware", "beforeLoad",],
     "fly_in_override_alias": ["fly_in_override", "loader_override", "canActivate_override", "beforeEnter_override", "middleware_override", "beforeLoad_override",],
     "fly_out_alias": ["fly_out", "canDeactivate", "beforeUnload",],
@@ -28,11 +30,13 @@ aliases = {
     "subways_alias": ["subways", "children", "routes", "screens", "kids"],
     "layout_alias": ["layout", "frame",],
     "layout_override_alias": ["layout_override", "frame_override",],
+    "hero_layout_alias": ["hero_layout", "hero_frame",],
     "fly_to_alias": ["fly_to", "redirect", "redirectTo",],
     "title_alias": ["title", ],
     "icon_alias": ["icon", "logo",],
     "subway_alias": ["subway", "child", "sub", "kid"],
     "fly_around_alias": ["shared", "shared_build"],
+
 }
 rev_aliases = {val:k for k in aliases.keys() for val in aliases.get(k)}
 class Airway():
@@ -62,9 +66,7 @@ class Airway():
     def _append_classes(cls):
         classes = []
         inheriting_classes = Airway.__subclasses__()
-        print("inheriting", inheriting_classes)
 
-        print("decorated", cls._pending_classes)
         inheriting_classes.sort(key=lambda x: x.__qualname__.count('.'), reverse=True)
         for pot_cls in cls._pending_classes:
             if pot_cls not in cls._registered_classes:  
@@ -315,7 +317,7 @@ Notice: async functions are also supported
                  fly_to:str=None, layout = None, layout_override:bool=None,
                     fly_in = None, fly_in_override:bool=None, 
                     fly_out=None, fly_out_override:bool=None,
-                    is_zone:bool=None, 
+                    is_zone:bool=None, hero_build:bool=None, hero_layout:bool=None,
                     title=None, icon=None, **kwargs):
         if not Airway._pending_classes: 
             Airway._pending_classes = set()
@@ -331,10 +333,11 @@ Notice: async functions are also supported
         self.fly_in = None
         self.fly_out = None
         self.fly_in_override = None
-        self. fly_out_override = None
+        self.fly_out_override = None
         self.icon = None
         self.title = None
-
+        self.hero_build = None
+        self.hero_layout = None
         self._class = None
 
         self.path_alias = None
@@ -348,7 +351,8 @@ Notice: async functions are also supported
         self. fly_out_override_alias = None
         self.title_alias = None
         self.icon_alias = None
-
+        self.hero_build_alias = None
+        self.hero_layout_alias = None
 
         params = locals()
         del params['self']
@@ -581,19 +585,20 @@ class Airline: # singleton only 1 instance
         if cls._instance is None:
             cls._instance = super(Airline, cls).__new__(cls)
         else:
-            # The Severe English Warning
-            print("\n" + "✈️  " + "="*65)
-            print("🚨 [FLETFLY HOLDING GROUP - ARCHITECTURAL NOTICE]")
-            print("Fletfly allows only ONE Airline instance to manage your fleet!")
-            print("-" * 65)
-            print("1. This single Airline can manage and merge all your Airzones efficiently.")
-            print("2. The main() function is a 'Travel Agent' that issues tickets to passengers.")
-            print("3. You MUST NOT create a new Airline for every travel agent; it's a resource leak!")
-            print("-" * 65)
-            print("💡 THE ENGINEERING SOLUTION:")
-            print("A. Define your Airline instance OUTSIDE the main() scope (Global Scope).")
-            print("B. Only call (fly(page, 'path')) INSIDE main() for each new traveler.")
-            print("="*65 + "\n")
+            print(f"""
+✈️{"="*65}
+🚨 [FLETFLY HOLDING GROUP - ARCHITECTURAL NOTICE]
+    Fletfly allows only ONE Airline instance to manage your fleet!
+✈️{"-" * 65}
+1. This single Airline can manage and merge all your Airzones efficiently.
+2. The main() function is a 'Travel Agent' that issues tickets to passengers.
+3. You MUST NOT create a new Airline for every travel agent; it's a resource leak!
+✈️{"-" * 65}
+💡 THE ENGINEERING SOLUTION:
+   A. Define your Airline instance OUTSIDE the main() scope (Global Scope).
+   B. Only call (fly(page, 'path')) INSIDE main() for each new traveler.
+✈️{"="*65}
+""")
         return cls._instance
     
     def __init__(self, zone_or_class_or_list: Airway, error_build:str = "", every_level_fallback=True,
@@ -620,6 +625,8 @@ class Airline: # singleton only 1 instance
         #print("dynamic_map:", self.dynamic_map.keys())
         print("----------------------- static map ---------------------")
         for item in self.static_map.values(): print(item)
+        print("----------------------- dynamic map ---------------------")
+        for item in self.dynamic_map.values(): print(item)
         self._initialized = True
     
     class _FlightNode:
@@ -635,6 +642,8 @@ class Airline: # singleton only 1 instance
             'layout_nodes', # list of layoutNodes
             'title','title_alias', # title
             'icon','icon_alias', # icon
+            'hero_build', 'hero_build_alias',
+            'hero_layout', 'hero_layout_alias',
             'is_zone', # False as default
             '_class',
             'regex', # None as default for dynamic nodes
@@ -680,6 +689,7 @@ class Airline: # singleton only 1 instance
             self._new_layouts = set()
             self._arounds = set()
             self._new_arounds = set()
+            self._hero_builds = {}
             self.page = page
 
         def __call__(self, path: str = "/"):
@@ -769,15 +779,28 @@ class Airline: # singleton only 1 instance
         return main_obj
 
     def _handle_route_change(self, e):
+        
         if not e.page.views or (e.page and e.page.route and e.page.views[-1].route and e.page.route != e.page.views[-1].route):
             e.page.run_task(self._navigate, e.page)
 
     async def _handle_view_pop(self, e):
+        
+        if len(e.page.views)>1:
+            v2 = e.page.views[-2]
+            params = getattr(v2, "params", {})
+            query = getattr(v2, "query", {}) 
+        await self._reconcile_views(e.page, [v.node for v in e.page.views[:-1]])
+        e.page.fly.params = getattr(v2, "params", {})
+        e.page.fly.query = getattr(v2, "query", {})
+        await e.page.push_route(v2.route)
+        """
+        
         try:
             fly_out_check = True
             if e.view is not None and not getattr(e.page, "_is_navigating", False):
                 e.page.fly._is_navigating = True
                 fly_out_check = await self._apply_fly_out_checks(e.page, e.view)
+                Airline._BuildObj._save_hero_build(e.page, e.view)
                 e.page.views.remove(e.view)
                 if e.page.views:
                     top_view = e.page.views[-1]
@@ -792,6 +815,7 @@ class Airline: # singleton only 1 instance
         finally:
             await asyncio.sleep(0.2)
             e.page.fly._is_navigating = False 
+"""
 
     def _get_path_fingerprint(self, path): # for matching dynamics :id == [user-id]
         import re
@@ -825,22 +849,6 @@ class Airline: # singleton only 1 instance
                         break
         return final_list
         
-    """
-            approved = 0
-            for i in range(len(temp_list) - 1, -1, -1):
-                capsule = temp_list[i]
-                if "over" in capsule:
-                    if getattr(capsule["_class"], capsule["over"], False):
-                        break       
-                elif not capsule.get("inheritable", False if in_out_build == "out" else True) and (
-                    capsule.get("apply_per_view", False) == False) and (
-                        current_class != capsule.get("_class")):
-                    temp_list.pop(i)
-                else:
-                    approved +=1
-            return temp_list[-approved:] if len(temp_list) >= approved else []
-"""
-    
     # start point
     # create node
     # chick if children for each go to start point
@@ -852,6 +860,7 @@ class Airline: # singleton only 1 instance
             seg = airway.path.strip("/") if airway.path else ""
             raw_path = f"{current_full_path.rstrip('/')}/{seg.strip('/')}"
             current_lineage = parent_lineage.copy() if parent_lineage else []
+            take_off_zone = raw_path.rstrip("/") + "/" if airway.is_zone else current_take_off_zone
             # no build then absolutely no page to see
             if airway._class:
                 over = {"_class":airway._class, "over":airway.fly_in_override}
@@ -878,14 +887,14 @@ class Airline: # singleton only 1 instance
             layout_node = None
             if airway._class:
                 if airway.build_alias:
-                    build_node = Airline._BuildNode(None, airway._class, airway.build_alias)
+                    build_node = Airline._BuildNode(None, airway._class, airway.build_alias, hero_attr_name=airway.hero_build_alias)
                 if airway.layout_alias:
-                    layout_node = Airline._LayoutNode(None, airway._class, airway.layout_alias, airway.fly_in_override_alias)
+                    layout_node = Airline._LayoutNode(None, airway._class, airway.layout_alias, airway.layout_override_alias, hero_attr_name=airway.hero_layout_alias)
             else:
                 if airway.build:
-                    build_node = Airline._BuildNode(airway.build)
+                    build_node = Airline._BuildNode(airway.build, hero_static=airway.hero_build)
                 if airway.layout:
-                    layout_node = Airline._LayoutNode(airway.layout)
+                    layout_node = Airline._LayoutNode(airway.layout, hero_static=airway.hero_layout)
 
             layout_nodes = list(p_layout_nodes) + ([layout_node] if layout_node else [])
 
@@ -894,7 +903,7 @@ class Airline: # singleton only 1 instance
                 node = Airline._FlightNode(
                     seg=airway.path,
                     path=raw_path,
-                    take_off_zone=current_take_off_zone,
+                    take_off_zone=take_off_zone,
                     title=airway.title,
                     title_alias = airway.title_alias,
                     icon= airway.icon,
@@ -917,12 +926,11 @@ class Airline: # singleton only 1 instance
                     self.static_map[raw_path] = node
                 current_lineage = (current_lineage.copy() if current_lineage else []) + [node]
 
-            if airway.subways:
                 
-                next_take_off_zone = raw_path.rstrip("/") + "/" if airway.is_zone else current_take_off_zone
 
+            if airway.subways:
                 for subway in airway.subways:
-                    self._parse_airways(subway, current_lineage, raw_path, next_take_off_zone, fly_in, fly_out, layout_nodes)
+                    self._parse_airways(subway, current_lineage, raw_path, take_off_zone, fly_in, fly_out, layout_nodes)
                     #self._safe_merge(self.static_map, self.dynamic_map, child_static, child_dynamic)
 
     def _safe_merge(self, main_static, main_dynamic, static, dynamic, skip_conflicts = False):
@@ -963,19 +971,23 @@ class Airline: # singleton only 1 instance
 # endregion
 
 # region Navigate
- 
     async def _navigate(self, page, fullpath = None):
-
+        
+        start = time.perf_counter()
+        print(f"Time taken: {(time.perf_counter() - start) * 1000:.2f}ms")
+        
         path, query = self._get_path_query(page, fullpath)
         
         node, params = self.match_path(path)
         if self._check_fly_to(page, node): return None
 
-        node = self._handle_fallback(page, node, path) 
+        node, params = self._handle_fallback(page, node, path) 
         if not node: return None
 
         if self._check_fly_to(page, node): return None
         
+        await self._apply_animation(page, node)
+
         page.fly.params = params if params else {}
         page.fly.query = query if query else {}
 
@@ -989,6 +1001,7 @@ class Airline: # singleton only 1 instance
         
         await self._reconcile_views(page, step3)
 
+        print(f"Time taken: to end of _navigate before page.update {(time.perf_counter() - start) * 1000:.2f}ms")
         page.update()
 
     def _get_path_query(self, page, fullpath = None):
@@ -1008,6 +1021,7 @@ class Airline: # singleton only 1 instance
 
     def match_path(self, path):
         print(f"---------- match path = {path} ----------")
+        
         path = path.rstrip("/")
         if not path: path = "/"
         if path in self.static_map:
@@ -1034,7 +1048,7 @@ class Airline: # singleton only 1 instance
         return False
 
     def _handle_fallback(self, page, node=None, path=None, build_failed=False):
-        
+        params = {}
         if not node or build_failed:
             if build_failed: print(f"[fletfly] Failed to create a build for route {path}")
             if self.every_level_fallback:
@@ -1046,19 +1060,51 @@ class Airline: # singleton only 1 instance
                         temp_path = ""
                     
                     fallback_path = (temp_path + "/*") if temp_path else "/*"
-                    node, param = self.match_path(fallback_path)
+                    node, params = self.match_path(fallback_path)
                     
                     if node or not temp_path:
                         break
             if not node and self.error_build:
                 current_zone_error = (page.fly.take_off_zone.rstrip("/") + "/" + self.error_build.strip("/"))
-                node = self.match_path(current_zone_error)
+                node, params = self.match_path(current_zone_error)
                 if not node:
-                    node = self.match_path("/" + self.error_build.strip("/"))
+                    node, params = self.match_path("/" + self.error_build.strip("/"))
             if not node:
                 self._default_error_view(page)
-                return None
-        return node
+                return None, None
+        return node, params
+    
+    async def _apply_animation(self, page, node:_FlightNode):
+        theme = "zoom"
+        if node.path.strip("/") == "resizer":
+            theme = "cupertino"
+        elif node.path.strip("/") == "resizer/about":
+            theme = "fade_upwards"
+        if isinstance(theme, ft.PageTransitionsTheme):
+            page_transitions = theme
+        else:
+            if not isinstance(theme, str):
+                theme = "none"
+            t = getattr(ft.PageTransitionTheme, theme.upper(), ft.PageTransitionTheme.NONE)
+            page_transitions = ft.PageTransitionsTheme(android=t, ios=t, macos=t, linux=t, windows=t)
+        
+        new_theme = page.theme if page.theme else ft.Theme()
+        new_theme.page_transitions = page_transitions
+        page.theme = new_theme
+        await asyncio.sleep(1)
+        """
+        page.theme = ft.Theme(
+            page_transitions=ft.PageTransitionsTheme(
+            android=ft.PageTransitionTheme.FADE_UPWARDS,
+            ios=ft.PageTransitionTheme.FADE_UPWARDS,
+            macos=ft.PageTransitionTheme.FADE_UPWARDS,
+            linux=ft.PageTransitionTheme.FADE_UPWARDS,
+            windows=ft.PageTransitionTheme.FADE_UPWARDS,
+        ))
+
+        """
+        
+
     def _apply_fly_pads(self, node:_FlightNode):
         if self.fly_pads == FlyPad.target_only or node.path == "/":
             return [node]
@@ -1138,7 +1184,6 @@ class Airline: # singleton only 1 instance
                             print("[_artificial_back] views count:", len(page.views))
                             print("[_artificial_back] page.views[i].route:", page.views[i].route)
                             await page.push_route(page.views[i].route)
-                            self._refresh_views(page, False)
                             page.update()
                             return
 
@@ -1251,7 +1296,9 @@ class Airline: # singleton only 1 instance
         final_paths = [self._get_real_path(page.route, n.path) if n.is_dynamic else n.path for n in final_nodes_list]
 
         for i in range(len(page.views) - 1, -1, -1):
-            if page.views[i].route not in final_paths and await self._apply_fly_out_checks(page, page.views[i]):
+            vi = page.views[i]
+            if vi.route not in final_paths and await self._apply_fly_out_checks(page, vi):
+                Airline._BuildObj._save_hero_build(page, vi)
                 page.views.pop(i)
         
         for index, flight_node in enumerate(final_nodes_list):
@@ -1262,10 +1309,11 @@ class Airline: # singleton only 1 instance
             build_obj = None
             pre_view = None
             if existing_view:
-                build_obj = existing_view.fly_build_obj if hasattr(existing_view, "fly_build_obj") else None
-                Airline._LayoutObj._dismount_obj_s(build_obj)
-
+                build_obj = existing_view._fly_build_obj if hasattr(existing_view, "_fly_build_obj") else None
+                Airline._BuildObj._save_hero_build(page, existing_view)
                 page.views.remove(existing_view)
+            if not build_obj:
+                build_obj = page.fly._hero_builds.get(final_paths[index])
             if not build_obj:
                 build_obj = Airline._BuildObj._create_build_obj(page, flight_node.build_node )
 
@@ -1319,17 +1367,16 @@ class Airline: # singleton only 1 instance
                 final_view = pre_view
 
             page.views.append(final_view)
-            if flight_node.is_zone:
-                page.fly.take_off_zone = flight_node.path.rstrip("/") + "/"
-            final_view.take_off_zone = page.fly.take_off_zone
+            
+            page.fly.take_off_zone = flight_node.take_off_zone
+            final_view.take_off_zone = flight_node.take_off_zone
             final_view.route = self._get_real_path(page.route, flight_node.path) if flight_node.is_dynamic else flight_node.path
             final_view.params = dict(page.fly.params) # to restore on back
             final_view.query = dict(page.fly.query) # to restore on back
             final_view.node = flight_node
-            final_view.fly_build_obj = build_obj
-
-        page.fly._layouts = page.fly._new_layouts
-        page.fly._arounds = page.fly._new_arounds
+            final_view._fly_build_obj = build_obj
+        page.fly._layouts = page.fly._new_layouts | {x for x in page.fly._layouts if x.hero}
+        page.fly._arounds = page.fly._new_arounds | {x for x in page.fly._arounds if x.hero}
         page.fly.last_success_path = page.route
         
     def _get_real_path(self, main_path, node_path):
@@ -1357,11 +1404,23 @@ class Airline: # singleton only 1 instance
         elif node.static: # static func
             return node.static
         return None    
+    @classmethod
+    def _get_sync_hero(cls, node):
+        if node is None:
+            return None
+        if node._class and node.hero_attr_name: # dynamic func
+            return getattr(node._class, node.hero_attr_name)
+        elif node.hero_static: # static func
+            return node.hero_static
+        return None    
     class _AroundNode: # one node created for one build for all times
-        def __init__(self, static=None, _class=None, attr_name=None, name=None):
+        def __init__(self, static=None, _class=None, attr_name=None, name=None,
+                     hero_static=None, hero_attr_name=None):
             self.static = static #function
             self.attr_name = attr_name
             self._class = _class #class
+            self.hero_static = hero_static #function
+            self.hero_attr_name = hero_attr_name
             if name:
                 self.name = name
             else: 
@@ -1389,9 +1448,16 @@ class Airline: # singleton only 1 instance
                 print(f"[fletfly] can't find fly_around shared component with name '{name}'")
 
     class _AroundObj:# carrying views (multiple) views info about the build
-        def __init__(self, obj:ft.Control, around_node:Airline._AroundNode=None):
+        def __init__(self, obj:ft.Control, around_node:Airline._AroundNode=None, hero:bool=None):
             self.obj = obj
             self.around_node = around_node
+            if hero is None:
+                if around_node._class and around_node.hero_attr_name:
+                    self.hero = getattr(around_node._class, around_node.attr_name)
+                else:
+                    self.hero = around_node.hero_static
+            if self.hero is None:
+                self.hero = True
         @classmethod
         def _create_around(cls, page, around_node:Airline._AroundNode):
             func = Airline._get_sync_func(around_node)
@@ -1435,16 +1501,27 @@ class Airline: # singleton only 1 instance
             return active_around_objs
         
     class _BuildNode: # one node created for one build for all times
-        def __init__(self, static=None, _class=None, attr_name=None):
+        def __init__(self, static=None, _class=None, attr_name=None, 
+                     hero_static=None, hero_attr_name=None):
             self.static = static #function
             self.attr_name = attr_name
             self._class = _class #class
+            self.hero_static = hero_static #function
+            self.hero_attr_name = hero_attr_name
     class _BuildObj:# carrying views (multiple) views info about the build
-        def __init__(self, objs_map=None, around_holders = None, around_nodes = None, build_node:Airline._BuildNode=None):
+        def __init__(self, objs_map=None, around_holders = None, around_nodes = None,
+                      build_node:Airline._BuildNode=None, hero:bool=None):
             self.objs_map = objs_map # {"named1":controloraroundnode, "":[unnamed1, unnamed2]}
             self.build_node = build_node
             self.around_holders = around_holders
             self.around_nodes = around_nodes
+            if hero is None:
+                if build_node._class and build_node.hero_attr_name:
+                    self.hero = getattr(build_node._class, build_node.attr_name)
+                else:
+                    self.hero = build_node.hero_static
+            if self.hero is None:
+                self.hero = False
         @classmethod
         def _dismount_build(cls, build:Airline._BuildObj):
             for holder in build.around_holders:
@@ -1540,13 +1617,23 @@ class Airline: # singleton only 1 instance
                     if item: objs_map[""].append(item)
             # objs_map {"named1":controloraroundnode, "":[unnamed1, unnamed2]}
             return objs_map
-    
+
+        @classmethod
+        def _save_hero_build(cls, page, view):
+            if hasattr(view, "_fly_build_obj"):
+                if Airline._get_sync_hero(view._fly_build_obj.build_node):
+                    page.fly._hero_builds[view.route] = view._fly_build_obj
+                else:
+                    page.fly._hero_builds.pop(view.route, None)
     class _LayoutNode: # one node created for one layout for all times
-        def __init__(self, static=None, _class=None, attr_name=None, over_name=None):
+        def __init__(self, static=None, _class=None, attr_name=None, over_name=None,
+                     hero_static=None, hero_attr_name=None):
             self.static = static #function
             self._class = _class #class
             self.attr_name = attr_name
             self.over_name = over_name
+            self.hero_static = hero_static
+            self.hero_attr_name = hero_attr_name
 
         @classmethod
         def _get_not_overrided_layout_nodes(cls, layout_node_list:list[Airline._LayoutNode]):
@@ -1561,12 +1648,19 @@ class Airline: # singleton only 1 instance
     class _LayoutObj:# objects for same or different layout
         def __init__(self, objs_map:dict=None, holders:list[ft.Control]=None,
                      around_holders:list[ft.Control] = None, around_nodes: list[Airline._AroundNode] = None,
-                     layout_node:Airline._LayoutNode=None):
+                     layout_node:Airline._LayoutNode=None, hero:bool = None):
             self.objs_map = objs_map # {"named1":control_or_around_node, "":[unnamed1, unnamed2]}
             self.holders = holders if holders else []
             self.around_holders = around_holders if around_holders else []
             self.around_nodes = around_nodes if around_nodes else []
             self.layout_node = layout_node
+            if hero is None:
+                if layout_node._class and layout_node.hero_attr_name:
+                    self.hero = getattr(layout_node._class, layout_node.attr_name)
+                else:
+                    self.hero = layout_node.hero_static
+            if self.hero is None:
+                self.hero = True
 
         @classmethod
         def _inject_into_layout(cls, page, son_obj:Airline._BuildObj|Airline._LayoutObj, layout_obj:Airline._LayoutObj):
@@ -1760,24 +1854,6 @@ class Airline: # singleton only 1 instance
     محتاجة ضبط من نار، واعادة تفكير هنعمل ايه
     سواءا كان فيه fly_out or not
     """
-    def _refresh_views(self, page, refresh_last=True):
-
-        if not page.views:
-            return
-        temp_list = []
-        if refresh_last:
-            temp_list = list(page.views)
-            page.views.clear()
-            for view in temp_list:
-                page.views.append(view)
-        elif len(page.views) > 1:
-            temp_list = page.views[:-1]
-            for view in temp_list:
-                page.views.remove(view)
-            while temp_list:
-                page.views.insert(0, temp_list.pop())
-        temp_list.clear()
-        page.update()
 
 class _FlyList(list):
     """Special list to mark prepared middlewares and avoid double processing."""
@@ -2085,9 +2161,4 @@ airway = Airway
 route = Airway
 Route = Airway
 Router = Airline
-
-
-
-
-
 
