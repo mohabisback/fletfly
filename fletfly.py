@@ -1,3 +1,17 @@
+# now working on loader where
+# the programmer writes
+# def build(page, data):
+# return ft.View(
+#        controls=[
+#            ft.AppBar(title="الملف الشخصي"),
+#            # المبرمج بيكتب كوده عادي، والـ get بتتصرف
+#            ft.Container(
+#                content=ft.Text(value=data("username")) # or data.get("username")
+#            )
+#        ]
+#    )
+# where the page loads first with progress rings in every data dependent spots, then updates on load
+# hope it works.......
 
 import flet as ft
 import re, sys, inspect, asyncio, os, importlib.util, time
