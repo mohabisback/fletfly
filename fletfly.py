@@ -1325,7 +1325,7 @@ class Airline: # singleton only 1 instance
                 page.views.remove(existing_view)
             
             if not build_obj:
-                if flight_node.is_dynamic():
+                if flight_node.is_dynamic:
                     build_obj = page.fly._hero_builds.get(flight_node.path, {}).get(final_paths[index], None)
                 else:
                     build_obj = page.fly._hero_builds.get(flight_node.path, None)
@@ -1562,8 +1562,8 @@ class Airline: # singleton only 1 instance
             page.fly._slots_map[func_key] = {} # pre-execution clearance
             page.fly._slots_token = func_key
 
-            build_return = Airline._PostFly._apply_post_fly(page, build_func, node)
-
+            build_return = Airline._PostFly._apply_post_fly(page, build_func, build_node)
+            
             page.fly._slots_token = None
 
             if not build_return: return None
@@ -1793,7 +1793,7 @@ class Airline: # singleton only 1 instance
             page.fly._slots_map[func_key] = {} # pre-execution clearance
             page.fly._slots_token = func_key
             
-            layout_return = Airline._PostFly._apply_post_fly(page, layout_func, node)
+            layout_return = Airline._PostFly._apply_post_fly(page, layout_func, layout_node)
 
             page.fly._slots_token = None
             if not layout_return: return None
@@ -1877,15 +1877,17 @@ class Airline: # singleton only 1 instance
                 return None
             if node._class and node.post_fly_attr_name: # dynamic func
                 return getattr(node._class, node.post_fly_attr_name)
-            elif node.hero_static: # static func
+            elif node.post_fly_static: # static func
                 return node.post_fly_static
             return None    
         @classmethod
-        def _apply_post_fly(cls, page, layout_build_func, node):
-            post_fly_func = cls._get_sync_post_fly(node)
+        def _apply_post_fly(cls, page, layout_build_func, layout_build_node):
 
-            page.fly._temp_data = []
+            post_fly_func = cls._get_sync_post_fly(layout_build_node)
+            
             controls_s = layout_build_func(page)
+            if post_fly_func is None or not callable(post_fly_func):
+                return controls_s
 
             captured = page.fly._temp_data.copy()
 
