@@ -1179,7 +1179,7 @@ class Airline: # singleton only 1 instance
                 if page.route != page.fly.last_success_path:
                     print(f"🚫 [fletfly] Access Denied. Rolling back to: {page.fly.last_success_path}")
                     page.on_route_change = None 
-                    page.go(page.fly.last_success_route)
+                    page.go(page.fly.last_success_path)
                     page.on_route_change = self._handle_route_change
                 return None
         return filtered_chain
@@ -1199,7 +1199,7 @@ class Airline: # singleton only 1 instance
                             return
 
     async def _apply_fly_out_checks(self, page, view):
-        return True
+
         if getattr(view, "fly_out_approved", False): # already checked
             return True
         
@@ -1225,7 +1225,7 @@ class Airline: # singleton only 1 instance
         return True #any other case scenario
 
     def _run_node_fly_in_out(self, page, in_out, view, node:_FlightNode, is_building, excuted_fly_in_out:set):
-        return True
+
         if node._class:
             attr = getattr(node, f"fly_{in_out}", None)
             if attr :
@@ -1294,7 +1294,7 @@ class Airline: # singleton only 1 instance
     async def _reconcile_views(self, page, final_nodes_list):
         #if page.views: print("start of reconcile in view value:", page.views[-1].controls[0].content.controls[0].value)
         #if page.views: print("start of reconcile in view value:", id(page.views[-1].controls[0].content.controls[0]))
-        
+        page.fly._temp_data = []
         page.fly._new_layouts = set()
         page.fly._new_arounds = set()
         
@@ -1661,7 +1661,7 @@ class Airline: # singleton only 1 instance
                     map = view._fly_build_obj
             else:
                 map = None
-            page.fly._hero_builds[build_node.path] = map
+            page.fly._hero_builds[view.route] = map
 
     class _LayoutNode: # one node created for one layout for all times
         def __init__(self, static=None, _class=None, 
