@@ -1,20 +1,5 @@
-# now working on loader where
-# the programmer writes
-# def build(page, data):
-# return ft.View(
-#        controls=[
-#            ft.AppBar(title="الملف الشخصي"),
-#            # المبرمج بيكتب كوده عادي، والـ get بتتصرف
-#            ft.Container(
-#                content=ft.Text(value=data("username")) # or data.get("username")
-#            )
-#        ]
-#    )
-# where the page loads first with progress rings in every data dependent spots, then updates on load
-# hope it works.......
-
 import flet as ft
-import re, sys, inspect, asyncio, os, importlib.util, time
+import re, sys, inspect, asyncio, os, importlib.util, time, threading
 __all__ = ['Airway', 'airway', 'route', 'Route', 'Airline', 'Router', 'fly_in', 'fly_out', 'layout']
 
 _page_err_msg = f"""
@@ -50,7 +35,8 @@ aliases = {
     "title_alias": ["title", ],
     "icon_alias": ["icon", "logo",],
     "subway_alias": ["subway", "child", "sub", "kid"],
-    "fly_around_alias": ["shared", "shared_build"],
+    "fly_around_alias": ["fly_around", "shared", "shared_build"],
+    "post_fly_alias": ["post_fly", "binder", "hydrator"],
 }
 rev_aliases = {val:k for k in aliases.keys() for val in aliases.get(k)}
 
@@ -333,7 +319,7 @@ Notice: async functions are also supported
                     fly_in = None, fly_in_override:bool=None, 
                     fly_out=None, fly_out_override:bool=None,
                     is_zone:bool=None, hero_build:bool=None, hero_layout:bool=None,
-                    title=None, icon=None, **kwargs):
+                    title=None, icon=None, post_fly=None, **kwargs):
         if not Airway._pending_classes: 
             Airway._pending_classes = set()
         if not Airway._registered_classes:
@@ -353,6 +339,7 @@ Notice: async functions are also supported
         self.title = None
         self.hero_build = None
         self.hero_layout = None
+        self.post_fly = None
         self._class = None
 
         self.path_alias = None
@@ -368,6 +355,7 @@ Notice: async functions are also supported
         self.icon_alias = None
         self.hero_build_alias = None
         self.hero_layout_alias = None
+        self.post_fly_alias = None
 
         params = locals()
         del params['self']
@@ -706,6 +694,7 @@ class Airline: # singleton only 1 instance
             self._new_arounds = set()
             self._hero_builds = {}
             self.page = page
+            self._temp_data = [] # list of controls to update
 
         def __call__(self, path: str = "/"):
             target = f"{self.take_off_zone}{path.strip('/')}".replace("//", "/")
@@ -902,14 +891,21 @@ class Airline: # singleton only 1 instance
             layout_node = None
             if airway._class:
                 if airway.build_alias:
-                    build_node = Airline._BuildNode(None, airway._class, airway.build_alias, hero_attr_name=airway.hero_build_alias)
+                    build_node = Airline._BuildNode(None, airway._class, airway.build_alias,
+                                                    hero_attr_name=airway.hero_build_alias, 
+                                                    post_fly_attr_name=airway.post_fly_alias)
                 if airway.layout_alias:
-                    layout_node = Airline._LayoutNode(None, airway._class, airway.layout_alias, airway.layout_override_alias, hero_attr_name=airway.hero_layout_alias)
+                    layout_node = Airline._LayoutNode(None, airway._class, airway.layout_alias,
+                                                      airway.layout_override_alias,
+                                                      hero_attr_name=airway.hero_layout_alias, 
+                                                    post_fly_attr_name=airway.post_fly_alias)
             else:
                 if airway.build:
-                    build_node = Airline._BuildNode(airway.build, hero_static=airway.hero_build)
+                    build_node = Airline._BuildNode(airway.build, hero_static=airway.hero_build,
+                                                    post_fly_static=airway.post_fly)
                 if airway.layout:
-                    layout_node = Airline._LayoutNode(airway.layout, hero_static=airway.hero_layout)
+                    layout_node = Airline._LayoutNode(airway.layout, hero_static=airway.hero_layout,
+                                                      post_fly_static=airway.post_fly)
 
             layout_nodes = list(p_layout_nodes) + ([layout_node] if layout_node else [])
 
@@ -1001,7 +997,7 @@ class Airline: # singleton only 1 instance
 
         if self._check_fly_to(page, node): return None
         
-        await self._apply_animation(page, node)
+        #await self._apply_animation(page, node)
 
         page.fly.params = params if params else {}
         page.fly.query = query if query else {}
@@ -1300,7 +1296,7 @@ class Airline: # singleton only 1 instance
         #if page.views: print("start of reconcile in view value:", id(page.views[-1].controls[0].content.controls[0]))
         
         page.fly._new_layouts = set()
-        page.fly._new_layouts = set()
+        page.fly._new_arounds = set()
         
         existing_layouts = page.fly._layouts
         #if existing_layouts: print("start of reconcile existing_layouts value:", existing_layouts[0].objs_map[''][0].content.controls[0].value)#.content.controls[0].value)
@@ -1434,12 +1430,15 @@ class Airline: # singleton only 1 instance
         return None    
     class _AroundNode: # one node created for one build for all times
         def __init__(self, static=None, _class=None, attr_name=None, name=None,
-                     hero_static=None, hero_attr_name=None):
+                     hero_static=None, hero_attr_name=None,
+                     post_fly_static=None, post_fly_attr_name=None):
             self.static = static #function
             self.attr_name = attr_name
             self._class = _class #class
             self.hero_static = hero_static #function
             self.hero_attr_name = hero_attr_name
+            self.post_fly_static = post_fly_static
+            self.post_fly_attr_name = post_fly_attr_name
             if name:
                 self.name = name
             else: 
@@ -1520,13 +1519,18 @@ class Airline: # singleton only 1 instance
             return active_around_objs
         
     class _BuildNode: # one node created for one build for all times
-        def __init__(self, static=None, _class=None, attr_name=None, 
-                     hero_static=None, hero_attr_name=None):
+        def __init__(self, static=None, _class=None,
+                    attr_name=None, 
+                     hero_static=None, hero_attr_name=None,
+                     post_fly_static=None, post_fly_attr_name=None,):
             self.static = static #function
             self.attr_name = attr_name
             self._class = _class #class
             self.hero_static = hero_static #function
             self.hero_attr_name = hero_attr_name
+            self.post_fly_static = post_fly_static
+            self.post_fly_attr_name = post_fly_attr_name
+
     class _BuildObj:# carrying views (multiple) views info about the build
         def __init__(self, objs_map=None, around_holders = None, around_nodes = None,
                       build_node:Airline._BuildNode=None, hero:bool=None):
@@ -1557,7 +1561,9 @@ class Airline: # singleton only 1 instance
             
             page.fly._slots_map[func_key] = {} # pre-execution clearance
             page.fly._slots_token = func_key
-            build_return = build_func(page)
+
+            build_return = Airline._PostFly._apply_post_fly(page, build_func, node)
+
             page.fly._slots_token = None
 
             if not build_return: return None
@@ -1658,14 +1664,18 @@ class Airline: # singleton only 1 instance
             page.fly._hero_builds[build_node.path] = map
 
     class _LayoutNode: # one node created for one layout for all times
-        def __init__(self, static=None, _class=None, attr_name=None, over_name=None,
-                     hero_static=None, hero_attr_name=None):
+        def __init__(self, static=None, _class=None, 
+                     attr_name=None, over_name=None,
+                     hero_static=None, hero_attr_name=None,
+                     post_fly_static=None, post_fly_attr_name=None):
             self.static = static #function
             self._class = _class #class
             self.attr_name = attr_name
             self.over_name = over_name
             self.hero_static = hero_static
             self.hero_attr_name = hero_attr_name
+            self.post_fly_static = post_fly_static
+            self.post_fly_attr_name = post_fly_attr_name
 
         @classmethod
         def _get_not_overrided_layout_nodes(cls, layout_node_list:list[Airline._LayoutNode]):
@@ -1783,7 +1793,7 @@ class Airline: # singleton only 1 instance
             page.fly._slots_map[func_key] = {} # pre-execution clearance
             page.fly._slots_token = func_key
             
-            layout_return = layout_func(page)
+            layout_return = Airline._PostFly._apply_post_fly(page, layout_func, node)
 
             page.fly._slots_token = None
             if not layout_return: return None
@@ -1860,7 +1870,184 @@ class Airline: # singleton only 1 instance
                 new_control = control_class()
             return new_control
 
-       
+    class _PostFly:
+        @classmethod
+        def _get_sync_post_fly(cls, node)->int|bool:
+            if node is None:
+                return None
+            if node._class and node.post_fly_attr_name: # dynamic func
+                return getattr(node._class, node.post_fly_attr_name)
+            elif node.hero_static: # static func
+                return node.post_fly_static
+            return None    
+        @classmethod
+        def _apply_post_fly(cls, page, layout_build_func, node):
+            post_fly_func = cls._get_sync_post_fly(node)
+
+            page.fly._temp_data = []
+            controls_s = layout_build_func(page)
+
+            captured = page.fly._temp_data.copy()
+
+            if post_fly_func and captured:
+
+                def post_fly_worker(registry_snapshot):    
+                    data = post_fly_func()
+                    
+                    for item in registry_snapshot:
+                        attrs = item['map']
+                        control = item["control"]
+                        
+                        for attr, data_path in attrs.items():                    
+                            raw_value = cls._get_nested_value(data, data_path)
+                            final_value = cls.validate_and_rescue(control, attr, raw_value)
+                            if final_value is not None:
+                                setattr(control, attr, final_value)
+                        
+                    page.update()
+                threading.Thread(target=post_fly_worker, args=(captured,), daemon=True).start()
+
+            return controls_s
+
+        @classmethod
+        def _get_nested_value(cls, data, path_str):
+            if not path_str or path_str.strip() == "": # requested data = "" | None
+                return data
+
+            keys = path_str.split(".")
+            current = data
+            
+            accumulated_path = ""
+            
+            for key in keys:
+                is_numeric = key.isdigit()
+                
+                current_path = f"{accumulated_path}.{key}" if accumulated_path else key
+                
+                if isinstance(current, (list, tuple)):
+                    if is_numeric:
+                        try:
+                            current = current[int(key)]  # requested data = "0" | "users_list.0"
+                        except IndexError:
+                            print(f"⚠️  [FletFly Data]: {current_path} index is out of range!")
+                            return None
+                    else:
+                        print(f"⚠️  [FletFly Data]: {current_path} expected an integer index, but got string!")
+                        return None
+                        
+                elif isinstance(current, dict):
+                    if is_numeric:                   # requested data = "0" | "users_dict.0"
+                        int_key = int(key)
+                        if int_key in current:          
+                            current = current[int_key]  # data = {0:"name"} | {"users_dict":{0:"name"}}
+                        elif key in current:
+                            current = current[key]   # data = {"0":"name"} | {"users_dict":{"0":"name"}}
+                        else:
+                            print(f"⚠️  [FletFly Data]: Inside data, key '{current_path}' (int or str) was not found!")
+                            return None
+                    else:
+                        if key in current:
+                            current = current[key]
+                        else:
+                            print(f"⚠️  [FletFly Data]: Inside data, key '{current_path}' was not found!")
+                            return None
+                            
+                else:
+                    print(f"⚠️  [FletFly Warning]: Inside data, the path '{accumulated_path}' is not a valid dictionary or list to look up '{key}'!")
+                    return None
+                
+                accumulated_path = accumulated_path + "." + key if accumulated_path else key
+                    
+            return current
+        @classmethod
+        def validate_and_rescue(cls, control, attr: str, new_value) -> any:
+            """
+            Validates and casts incoming data based on Flet 0.86 strict hierarchy,
+            returning the clean value directly to be injected into the control attribute.
+            """
+            annotation = type(control).__annotations__.get(attr)
+            allowed_types = annotation.__args__ if hasattr(annotation, "__args__") else (annotation,)
+            
+            actual_type = type(new_value)
+
+            # 1. Initial Check: Is it perfectly valid as-is?
+            if actual_type == annotation or actual_type in allowed_types:
+                return new_value
+
+            # 2. Float Casting Check
+            elif float in allowed_types and type(new_value) in (int, str):
+                try:
+                    return float(new_value)
+                except (ValueError, TypeError):
+                    pass
+
+            # 3. Integer Casting Check
+            elif int in allowed_types and type(new_value) in (float, str):
+                try:
+                    return int(float(new_value))
+                except (ValueError, TypeError):
+                    pass
+
+            # 4. String Casting Check
+            elif str in allowed_types:
+                try:
+                    return str(new_value)
+                except (ValueError, TypeError, AttributeError):
+                    pass
+
+            # 5. Final Line of Defense: UI Rescue fallback values
+            if bool in allowed_types:
+                return False
+            print(f"⚠️ [fletfly data]: The value passed to '{attr}' doesn't match attr type and can't be casted")
+            return None
+
+
+def data(page: ft.Page, control, **kwargs):
+    data_msg=f"""
+[fletfly data] you must apply a lazy_loader function returning the lazy data, and use data() as following:
+fty.data(page,
+    ft.Text(size=24, weight="bold"),   # your ft.Control
+    value=("user.name", "loading..."), # with default, extracted from data {"{'user':{'name':'your_name'}}"}  
+    color=("user.0")                   # without default, extracted from data {"{'user':['red']}"}
+)
+Hint: you can use flet auto complete first for the **kwargs, then move the ) up to separate the control
+"""
+    if not control or not kwargs:
+        print(data_msg)
+        return control
+        
+    attr_map = {}
+    for attr, config in kwargs.items():
+        val = None  
+        default_val = None
+        if isinstance(config, (tuple,list)):
+            config_len = len(config)
+            if config_len < 1:
+                print(data_msg)
+                continue
+            elif config_len < 2:
+                val = config[0]
+            elif config_len == 2:
+                val, default_val = config
+            else:
+                print(data_msg)
+        elif isinstance(config, str):
+            val = config
+        elif isinstance(config, (int, float)):
+            val = str(config)
+        else:
+            print(data_msg)   
+        if val is not None:
+            attr_map[attr] = val
+            if default_val is not None:
+                try:           
+                    setattr(control, attr, default_val)
+                except: # flet will aready send an attr error
+                    print(data_msg)
+    if attr_map:
+        page.fly._temp_data.append({"control": control, "map":attr_map})
+    return control
+
 
 
     def _default_error_view(self, page):
@@ -2178,12 +2365,11 @@ Example 1:   page.fly()   | Example 2:   page.fly('/')
 ✈️{"="*65}
     """)
 
-from threading import Timer
 __send_help_timer = None
 def __reset_help_timer():
     global __send_help_timer
     if __send_help_timer: __send_help_timer.cancel()
-    __send_help_timer = Timer(3.0, __send_help)
+    __send_help_timer = threading.Timer(3.0, __send_help)
     __send_help_timer.daemon = True
     __send_help_timer.start()
 __reset_help_timer()
